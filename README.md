@@ -9,6 +9,13 @@
 
 ## 📢 最近更新
 
+### v3.4 - 自动化测试与依赖文件（2026-05-07）
+
+- ✅ **新增 pytest 测试套件**：覆盖服务器间传输、Paramiko 客户端、SSH config 解析和 tunnel 辅助逻辑
+- 🧪 **真实 SSH 集成测试**：默认跳过，设置 `SSH_SKILL_TEST_HOST=pi` 后可对真实远程服务器执行 smoke tests
+- 📦 **新增 requirements.txt**：统一声明运行和测试依赖，便于新环境快速安装
+- 🔒 **敏感信息保护测试**：验证错误路径不会输出密码形态的连接元数据
+
 ### v3.3 - Windows 原生 SSH 适配 & Passphrase 密钥支持（2026-03-24）
 
 - 🔑 **Passphrase 密钥完整支持**：通过 Windows SSH Agent 集成，passphrase 保护的密钥可以无感使用，无需每次交互输入密码
@@ -145,8 +152,13 @@ ssh_cluster.py "df -h" --tags "web,nginx" --parallel --max-workers 10
 ### 依赖
 
 ```bash
-pip install paramiko
+pip install -r requirements.txt
 ```
+
+`requirements.txt` 当前包含：
+
+- `paramiko`：SSH config 解析、密码认证和 SFTP 传输
+- `pytest`：本地单元测试和可选真实 SSH 集成测试
 
 ### 配置
 
@@ -188,6 +200,32 @@ MSYS_NO_PATHCONV=1 python ~/.claude/skills/ssh-skill/scripts/ssh_download.py pro
 
 ```bash
 MSYS_NO_PATHCONV=1 python ~/.claude/skills/ssh-skill/scripts/ssh_server_transfer.py source-server /data/backup.tar.gz target-server /backup/
+```
+
+## 🧪 测试
+
+默认测试只运行本地 mock/unit 场景，不访问真实 SSH 主机：
+
+```bash
+python3 -m pytest -q
+python3 -m pytest tests/unit -q
+```
+
+真实 SSH smoke tests 需要显式设置目标别名。示例使用 `~/.ssh/config` 中的 `pi`：
+
+```bash
+SSH_SKILL_TEST_HOST=pi python3 -m pytest tests/integration -q
+```
+
+集成测试会在远程 `/tmp/ssh-skill-test-*` 下创建临时文件，并在结束时清理。它覆盖远程命令、单文件上传下载、目录递归传输和 stream 模式服务器间传输。
+
+发布或修改脚本前建议运行：
+
+```bash
+python3 -m pytest -q
+python3 -m py_compile $(rg --files scripts -g '*.py')
+python3 /home/say/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
+git diff --check
 ```
 
 ## 🎯 使用场景

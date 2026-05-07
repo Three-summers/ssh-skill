@@ -9,6 +9,13 @@
 
 ## 📢 Recent Updates
 
+### v3.4 - Automated Tests and Dependency File (2026-05-07)
+
+- ✅ **Added pytest test suite**: Covers server-to-server transfer, Paramiko client behavior, SSH config parsing, and tunnel helpers
+- 🧪 **Real SSH integration tests**: Skipped by default; set `SSH_SKILL_TEST_HOST=pi` to run smoke tests against a real remote server
+- 📦 **Added requirements.txt**: Centralizes runtime and test dependencies for new environments
+- 🔒 **Sensitive output regression coverage**: Verifies password-shaped connection metadata is not exposed in error paths
+
 ### v3.3 - Windows Native SSH Adaptation & Passphrase Key Support (2026-03-24)
 
 - 🔑 **Full Passphrase Key Support**: Seamless passphrase-protected key usage through Windows SSH Agent integration — no interactive password input needed
@@ -145,8 +152,13 @@ ssh_cluster.py "df -h" --tags "web,nginx" --parallel --max-workers 10
 ### Dependencies
 
 ```bash
-pip install paramiko
+pip install -r requirements.txt
 ```
+
+`requirements.txt` currently includes:
+
+- `paramiko`: SSH config parsing, password authentication, and SFTP transfer
+- `pytest`: local unit tests and optional real SSH integration tests
 
 ### Configuration
 
@@ -188,6 +200,32 @@ MSYS_NO_PATHCONV=1 python ~/.claude/skills/ssh-skill/scripts/ssh_download.py pro
 
 ```bash
 MSYS_NO_PATHCONV=1 python ~/.claude/skills/ssh-skill/scripts/ssh_server_transfer.py source-server /data/backup.tar.gz target-server /backup/
+```
+
+## 🧪 Testing
+
+The default test run uses local mocked/unit scenarios only and does not contact real SSH hosts:
+
+```bash
+python3 -m pytest -q
+python3 -m pytest tests/unit -q
+```
+
+Real SSH smoke tests require an explicit target alias. This example uses `pi` from `~/.ssh/config`:
+
+```bash
+SSH_SKILL_TEST_HOST=pi python3 -m pytest tests/integration -q
+```
+
+Integration tests create temporary files under remote `/tmp/ssh-skill-test-*` and clean them up at the end. They cover remote command execution, single-file upload/download, recursive directory transfer, and stream-mode server-to-server transfer.
+
+Before publishing or changing scripts, run:
+
+```bash
+python3 -m pytest -q
+python3 -m py_compile $(rg --files scripts -g '*.py')
+python3 /home/say/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
+git diff --check
 ```
 
 ## 🎯 Use Cases
