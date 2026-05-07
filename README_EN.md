@@ -12,6 +12,7 @@
 ### v3.4 - Automated Tests and Dependency File (2026-05-07)
 
 - ✅ **Added pytest test suite**: Covers server-to-server transfer, Paramiko client behavior, SSH config parsing, and tunnel helpers
+- 📡 **Added streaming command execution**: `ssh_execute.py --stream` forwards remote stdout/stderr live for blocking tasks and log watching
 - 🧪 **Real SSH integration tests**: Skipped by default; set `SSH_SKILL_TEST_HOST=pi` to run smoke tests against a real remote server
 - 📦 **Added requirements.txt**: Centralizes runtime and test dependencies for new environments
 - 🔒 **Sensitive output regression coverage**: Verifies password-shaped connection metadata is not exposed in error paths
@@ -173,6 +174,16 @@ pip install -r requirements.txt
 ```bash
 python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "systemctl status nginx"
 ```
+
+For blocking commands or live log watching, use streaming mode. It writes remote stdout/stderr directly to local stdout/stderr and does not emit JSON:
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "cd /opt/app && ./run.sh" --stream
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "tail -f /var/log/app.log" --stream
+```
+
+`--stream` does not reuse remote shell state. Put directory changes, environment variables, and other context in the same command.
+When `--timeout` is omitted, streaming mode keeps running until the remote command exits or the local process is interrupted.
 
 ### Upload Files
 

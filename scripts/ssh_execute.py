@@ -22,6 +22,7 @@ import socket
 import struct
 import argparse
 import subprocess
+import time
 
 # 添加lib到路径
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -169,6 +170,88 @@ def direct_execute(alias, command, timeout):
     }
 
 
+def _write_stream(stream, data):
+    """Write SSH byte output to a local text stream immediately."""
+    if not data:
+        return
+    stream.write(data.decode('utf-8', errors='replace'))
+    stream.flush()
+
+
+def _stream_paramiko_client(client, command, timeout=None, poll_interval=0.05):
+    """Run a command through Paramiko and stream stdout/stderr as it arrives."""
+    channel = None
+    try:
+        ssh_client = client._get_connection()
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        channel = stdout.channel
+        start_time = time.monotonic()
+
+        while True:
+            made_progress = False
+
+            while channel.recv_ready():
+                data = channel.recv(65536)
+                if not data:
+                    break
+                _write_stream(sys.stdout, data)
+                made_progress = True
+
+            while channel.recv_stderr_ready():
+                data = channel.recv_stderr(65536)
+                if not data:
+                    break
+                _write_stream(sys.stderr, data)
+                made_progress = True
+
+            if channel.exit_status_ready():
+                while channel.recv_ready():
+                    _write_stream(sys.stdout, channel.recv(65536))
+                while channel.recv_stderr_ready():
+                    _write_stream(sys.stderr, channel.recv_stderr(65536))
+                return channel.recv_exit_status()
+
+            if timeout is not None and time.monotonic() - start_time >= timeout:
+                channel.close()
+                print(f"Command timeout after {timeout} seconds", file=sys.stderr)
+                return -1
+
+            if not made_progress:
+                time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                pass
+        print("\nInterrupted; remote SSH channel closed", file=sys.stderr)
+        return 130
+    except Exception as e:
+        print(f"Execution error: {e}", file=sys.stderr)
+        return -1
+
+
+def stream_execute(alias, command, timeout=None):
+    """
+    Execute a remote command with live stdout/stderr forwarding.
+
+    Password-auth hosts use Paramiko so comment metadata passwords still work.
+    Key-auth hosts use native ssh so OpenSSH config features remain available.
+    """
+    from config_v3 import SSHConfigLoaderV3
+    from native_ssh_fallback import execute_native_ssh_stream
+
+    loader = SSHConfigLoaderV3()
+    params = loader.get_connection_params(alias)
+
+    if not params.get('password'):
+        return execute_native_ssh_stream(alias, command, timeout)
+
+    client = loader.from_alias(alias)
+    return _stream_paramiko_client(client, command, timeout)
+
+
 def main():
     parser = argparse.ArgumentParser(description='SSH command execution tool v3.0')
     parser.add_argument('alias', help='SSH host alias from ~/.ssh/config')
@@ -176,11 +259,16 @@ def main():
     parser.add_argument('--timeout', type=int, help='Timeout in seconds')
     parser.add_argument('--no-daemon', action='store_true',
                         help='Disable daemon mode, use direct SSH connection')
+    parser.add_argument('--stream', action='store_true',
+                        help='Stream stdout/stderr live; disables JSON output')
 
     args = parser.parse_args()
-    timeout = args.timeout or 30
+    timeout = args.timeout if args.stream else (args.timeout or 30)
 
     try:
+        if args.stream:
+            sys.exit(stream_execute(args.alias, args.command, timeout))
+
         result = None
 
         # 智能判断是否使用守护进程

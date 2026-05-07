@@ -12,6 +12,7 @@
 ### v3.4 - 自动化测试与依赖文件（2026-05-07）
 
 - ✅ **新增 pytest 测试套件**：覆盖服务器间传输、Paramiko 客户端、SSH config 解析和 tunnel 辅助逻辑
+- 📡 **新增流式命令执行**：`ssh_execute.py --stream` 可实时回传远程 stdout/stderr，适合阻塞任务和日志观察
 - 🧪 **真实 SSH 集成测试**：默认跳过，设置 `SSH_SKILL_TEST_HOST=pi` 后可对真实远程服务器执行 smoke tests
 - 📦 **新增 requirements.txt**：统一声明运行和测试依赖，便于新环境快速安装
 - 🔒 **敏感信息保护测试**：验证错误路径不会输出密码形态的连接元数据
@@ -173,6 +174,16 @@ pip install -r requirements.txt
 ```bash
 python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "systemctl status nginx"
 ```
+
+阻塞命令或需要实时查看日志时，使用流式模式。该模式直接把远程 stdout/stderr 写到本机 stdout/stderr，不输出 JSON：
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "cd /opt/app && ./run.sh" --stream
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "tail -f /var/log/app.log" --stream
+```
+
+`--stream` 不复用远程 shell 状态；如果需要目录、环境变量等上下文，请写在同一条命令里。
+流式模式不设置 `--timeout` 时会持续运行，直到远程命令退出或本机中断。
 
 ### 上传文件
 

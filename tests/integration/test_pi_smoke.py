@@ -88,6 +88,28 @@ def test_execute_command_against_real_host():
     assert payload["exit_code"] == 0
 
 
+def test_stream_execute_outputs_raw_stdout_and_stderr():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "ssh_execute.py"),
+            HOST,
+            "printf 'stream-out\\n'; printf 'stream-err\\n' >&2",
+            "--stream",
+            "--timeout",
+            "10",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, _failure(result)
+    assert result.stdout == "stream-out\n"
+    assert result.stderr == "stream-err\n"
+
+
 def test_upload_and_download_small_file(remote_root, tmp_path):
     content = "hello from ssh skill integration\n"
     local_file = tmp_path / "upload.txt"

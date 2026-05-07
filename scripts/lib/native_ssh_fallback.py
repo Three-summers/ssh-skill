@@ -8,6 +8,8 @@
 import subprocess
 import os
 import json
+import sys
+import threading
 from typing import Optional, Dict, Tuple
 
 
@@ -262,6 +264,101 @@ def execute_native_ssh(
             'stderr': f'执行失败: {str(e)}',
             'method': 'native_ssh_windows' if os.name == 'nt' else 'native_ssh'
         }
+
+
+def execute_native_ssh_stream(
+    alias: str,
+    command: str,
+    timeout: Optional[int] = None,
+    ssh_config_path: Optional[str] = None
+) -> int:
+    """
+    使用原生 ssh 命令流式执行远程命令，stdout/stderr 实时写回本机。
+
+    Returns:
+        远程命令退出码；超时返回 -1；本机中断返回 130。
+    """
+    if ssh_config_path is None:
+        ssh_config_path = os.path.expanduser("~/.ssh/config")
+
+    if os.name == 'nt':
+        ssh_available, ssh_msg = check_windows_ssh_availability()
+        if not ssh_available:
+            print(f"Windows OpenSSH 不可用: {ssh_msg}", file=sys.stderr)
+            return -1
+
+        native_ssh_exe = ssh_msg
+        ssh_config_path_win = ssh_config_path.replace('/', '\\')
+        ssh_cmd = [
+            'powershell',
+            '-NoProfile',
+            '-Command',
+            f'& "{native_ssh_exe}" -F "{ssh_config_path_win}" '
+            f'-o BatchMode=yes -o StrictHostKeyChecking=accept-new '
+            f'{alias} "{command}"'
+        ]
+    else:
+        ssh_cmd = [
+            'ssh',
+            '-F', ssh_config_path,
+            '-o', 'BatchMode=yes',
+            '-o', 'StrictHostKeyChecking=accept-new',
+            alias,
+            command
+        ]
+
+    process = None
+
+    def pipe_output(source, target):
+        try:
+            for line in iter(source.readline, ''):
+                if not line:
+                    break
+                target.write(line)
+                target.flush()
+        finally:
+            try:
+                source.close()
+            except Exception:
+                pass
+
+    try:
+        process = subprocess.Popen(
+            ssh_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        stdout_thread = threading.Thread(
+            target=pipe_output, args=(process.stdout, sys.stdout), daemon=True
+        )
+        stderr_thread = threading.Thread(
+            target=pipe_output, args=(process.stderr, sys.stderr), daemon=True
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        exit_code = process.wait(timeout=timeout)
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        return exit_code
+
+    except subprocess.TimeoutExpired:
+        if process is not None:
+            process.kill()
+        print(f"命令执行超时（{timeout}秒）", file=sys.stderr)
+        return -1
+    except KeyboardInterrupt:
+        if process is not None:
+            process.terminate()
+        print("\nInterrupted; native ssh process terminated", file=sys.stderr)
+        return 130
+    except Exception as e:
+        print(f"Native SSH stream error: {e}", file=sys.stderr)
+        return -1
 
 
 def check_ssh_agent() -> Tuple[bool, str]:

@@ -33,9 +33,21 @@ Render list/find results as a Markdown table with these columns when available: 
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>"
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --timeout 300
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --no-daemon
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream --timeout 300
 ```
 
 `ssh_execute.py` automatically uses the daemon long connection when available and starts it when needed.
+Normal mode returns a JSON result after the remote command exits.
+
+Use `--stream` for blocking commands, long-running programs, and live log watching:
+
+```bash
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "cd /opt/app && ./run.sh" --stream
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "tail -f /var/log/app.log" --stream
+```
+
+Stream mode writes remote stdout and stderr directly to local stdout and stderr, so it does not emit JSON. When `--timeout` is omitted, it keeps running until the remote command exits or the local process is interrupted. It still executes one command session and does not preserve remote shell state across calls; put `cd`, `export`, and other setup in the same command.
 
 For related read-only checks, combine commands:
 
