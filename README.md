@@ -13,6 +13,7 @@
 
 - ✅ **新增 pytest 测试套件**：覆盖服务器间传输、Paramiko 客户端、SSH config 解析和 tunnel 辅助逻辑
 - 📡 **新增流式命令执行**：`ssh_execute.py --stream` 可实时回传远程 stdout/stderr，适合阻塞任务和日志观察
+- 🔐 **新增 sudo 命令模式**：`ssh_execute.py --sudo` 使用 SSH config 注释元数据中的密码，通过 stdin 安全传给 `sudo -S`
 - 🧪 **真实 SSH 集成测试**：默认跳过，设置 `SSH_SKILL_TEST_HOST=pi` 后可对真实远程服务器执行 smoke tests
 - 📦 **新增 requirements.txt**：统一声明运行和测试依赖，便于新环境快速安装
 - 🔒 **敏感信息保护测试**：验证错误路径不会输出密码形态的连接元数据
@@ -185,6 +186,15 @@ python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "tail -f /v
 `--stream` 不复用远程 shell 状态；如果需要目录、环境变量等上下文，请写在同一条命令里。
 流式模式不设置 `--timeout` 时会持续运行，直到远程命令退出或本机中断。
 
+需要执行 sudo 命令时，使用 `--sudo`。该模式不会把密码拼进远程命令行，而是从 SSH config 注释元数据读取 `password` 并写入远程 stdin：
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "whoami && id -u" --sudo
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "apt update" --sudo --stream
+```
+
+`--sudo` 会绕过 daemon 模式，因为 sudo 密码需要通过当前 SSH channel 的 stdin 传递。如果目标主机没有配置密码元数据，命令会失败并提示缺少 sudo password。
+
 ### 上传文件
 
 ```bash
@@ -237,6 +247,12 @@ python3 -m pytest -q
 python3 -m py_compile $(rg --files scripts -g '*.py')
 python3 /home/say/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 git diff --check
+```
+
+需要验证 sudo 场景时，设置单独的目标别名：
+
+```bash
+SSH_SKILL_SUDO_TEST_HOST=petavm python3 -m pytest tests/integration/test_sudo_smoke.py -q
 ```
 
 ## 🎯 使用场景

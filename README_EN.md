@@ -13,6 +13,7 @@
 
 - ✅ **Added pytest test suite**: Covers server-to-server transfer, Paramiko client behavior, SSH config parsing, and tunnel helpers
 - 📡 **Added streaming command execution**: `ssh_execute.py --stream` forwards remote stdout/stderr live for blocking tasks and log watching
+- 🔐 **Added sudo command mode**: `ssh_execute.py --sudo` reads password metadata from SSH config comments and passes it to `sudo -S` through stdin
 - 🧪 **Real SSH integration tests**: Skipped by default; set `SSH_SKILL_TEST_HOST=pi` to run smoke tests against a real remote server
 - 📦 **Added requirements.txt**: Centralizes runtime and test dependencies for new environments
 - 🔒 **Sensitive output regression coverage**: Verifies password-shaped connection metadata is not exposed in error paths
@@ -185,6 +186,15 @@ python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "tail -f /v
 `--stream` does not reuse remote shell state. Put directory changes, environment variables, and other context in the same command.
 When `--timeout` is omitted, streaming mode keeps running until the remote command exits or the local process is interrupted.
 
+Use `--sudo` for commands that need sudo. This mode does not embed the password in the remote command line; it reads `password` from SSH config comment metadata and writes it to remote stdin:
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "whoami && id -u" --sudo
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "apt update" --sudo --stream
+```
+
+`--sudo` bypasses daemon mode because sudo password input must be sent through the current SSH channel stdin. If the target host has no password metadata, the command fails with a missing sudo password message.
+
 ### Upload Files
 
 ```bash
@@ -237,6 +247,12 @@ python3 -m pytest -q
 python3 -m py_compile $(rg --files scripts -g '*.py')
 python3 /home/say/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 git diff --check
+```
+
+To verify sudo behavior, set a separate target alias:
+
+```bash
+SSH_SKILL_SUDO_TEST_HOST=petavm python3 -m pytest tests/integration/test_sudo_smoke.py -q
 ```
 
 ## 🎯 Use Cases

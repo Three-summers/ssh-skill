@@ -23,6 +23,7 @@ import struct
 import argparse
 import subprocess
 import time
+import shlex
 
 # 添加lib到路径
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -118,7 +119,53 @@ def start_daemon_background(alias):
         return False
 
 
-def direct_execute(alias, command, timeout):
+def _sudo_wrap(command):
+    """Wrap a user command for non-interactive sudo without embedding passwords."""
+    return f"sudo -S -p '' sh -lc {shlex.quote(command)}"
+
+
+def _send_stdin_password(stdin, password):
+    """Send a password over the SSH stdin channel without logging it."""
+    stdin.write(password + "\n")
+    stdin.flush()
+    channel = getattr(stdin, "channel", None)
+    if channel is not None and hasattr(channel, "shutdown_write"):
+        try:
+            channel.shutdown_write()
+        except Exception:
+            pass
+
+
+def _execute_paramiko_command(client, command, timeout=None, sudo_password=None):
+    """Execute through Paramiko, optionally feeding sudo password on stdin."""
+    try:
+        ssh_client = client._get_connection()
+        stdin, stdout, stderr = ssh_client.exec_command(
+            command, timeout=timeout or client.timeout
+        )
+        if sudo_password is not None:
+            _send_stdin_password(stdin, sudo_password)
+
+        stdout_text = stdout.read().decode('utf-8', errors='replace')
+        stderr_text = stderr.read().decode('utf-8', errors='replace')
+        exit_code = stdout.channel.recv_exit_status()
+
+        return {
+            'success': exit_code == 0,
+            'exit_code': exit_code,
+            'stdout': stdout_text,
+            'stderr': stderr_text,
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'exit_code': -1,
+            'stdout': '',
+            'stderr': f'Execution error: {e}',
+        }
+
+
+def direct_execute(alias, command, timeout, use_sudo=False):
     """直连执行命令（智能选择客户端类型，支持降级到原生 SSH）"""
     from config_v3 import SSHConfigLoaderV3
     from native_ssh_fallback import should_use_native_ssh, execute_native_ssh, check_ssh_agent
@@ -132,6 +179,26 @@ def direct_execute(alias, command, timeout):
         metadata = loader.load_metadata(alias)
     except:
         pass
+
+    params = loader.get_connection_params(alias)
+
+    if use_sudo:
+        sudo_password = params.get('password')
+        if not sudo_password:
+            return {
+                'success': False,
+                'exit_code': -1,
+                'stdout': '',
+                'stderr': 'sudo password is not available in SSH config metadata',
+            }
+        client = loader.from_alias(alias)
+        client.timeout = timeout
+        return _execute_paramiko_command(
+            client,
+            _sudo_wrap(command),
+            timeout=timeout,
+            sudo_password=sudo_password,
+        )
 
     # 检测是否应该降级到原生 SSH
     should_fallback, reason = should_use_native_ssh(ssh_config, metadata)
@@ -178,12 +245,20 @@ def _write_stream(stream, data):
     stream.flush()
 
 
-def _stream_paramiko_client(client, command, timeout=None, poll_interval=0.05):
+def _stream_paramiko_client(
+    client,
+    command,
+    timeout=None,
+    poll_interval=0.05,
+    sudo_password=None
+):
     """Run a command through Paramiko and stream stdout/stderr as it arrives."""
     channel = None
     try:
         ssh_client = client._get_connection()
         stdin, stdout, stderr = ssh_client.exec_command(command)
+        if sudo_password is not None:
+            _send_stdin_password(stdin, sudo_password)
         channel = stdout.channel
         start_time = time.monotonic()
 
@@ -232,7 +307,7 @@ def _stream_paramiko_client(client, command, timeout=None, poll_interval=0.05):
         return -1
 
 
-def stream_execute(alias, command, timeout=None):
+def stream_execute(alias, command, timeout=None, use_sudo=False):
     """
     Execute a remote command with live stdout/stderr forwarding.
 
@@ -244,6 +319,22 @@ def stream_execute(alias, command, timeout=None):
 
     loader = SSHConfigLoaderV3()
     params = loader.get_connection_params(alias)
+
+    if use_sudo:
+        sudo_password = params.get('password')
+        if not sudo_password:
+            print(
+                'sudo password is not available in SSH config metadata',
+                file=sys.stderr,
+            )
+            return -1
+        client = loader.from_alias(alias)
+        return _stream_paramiko_client(
+            client,
+            _sudo_wrap(command),
+            timeout,
+            sudo_password=sudo_password,
+        )
 
     if not params.get('password'):
         return execute_native_ssh_stream(alias, command, timeout)
@@ -261,13 +352,17 @@ def main():
                         help='Disable daemon mode, use direct SSH connection')
     parser.add_argument('--stream', action='store_true',
                         help='Stream stdout/stderr live; disables JSON output')
+    parser.add_argument('--sudo', action='store_true',
+                        help='Run command through sudo using password metadata')
 
     args = parser.parse_args()
     timeout = args.timeout if args.stream else (args.timeout or 30)
 
     try:
         if args.stream:
-            sys.exit(stream_execute(args.alias, args.command, timeout))
+            sys.exit(stream_execute(
+                args.alias, args.command, timeout, use_sudo=args.sudo
+            ))
 
         result = None
 
@@ -279,7 +374,9 @@ def main():
 
         has_key = params.get('key_file') is not None
         has_password = params.get('password') is not None
-        use_daemon = has_password and not args.no_daemon  # 只有密码认证才使用守护进程
+        use_daemon = (
+            has_password and not args.no_daemon and not args.sudo
+        )  # sudo needs stdin, so bypass daemon mode
 
         if use_daemon:
             # 密码认证：尝试通过守护进程执行
@@ -292,7 +389,9 @@ def main():
 
         # 仍然没有结果，使用直连（密钥认证会使用 NativeSSHClient）
         if result is None:
-            result = direct_execute(args.alias, args.command, timeout)
+            result = direct_execute(
+                args.alias, args.command, timeout, use_sudo=args.sudo
+            )
 
         print(json.dumps(result, ensure_ascii=True, indent=2))
         sys.exit(0 if result.get('success') else 1)

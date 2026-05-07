@@ -35,6 +35,8 @@ python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --timeout 300
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --no-daemon
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream --timeout 300
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --sudo
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --sudo --stream
 ```
 
 `ssh_execute.py` automatically uses the daemon long connection when available and starts it when needed.
@@ -48,6 +50,13 @@ python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "tail -f /var/log/app.log" --strea
 ```
 
 Stream mode writes remote stdout and stderr directly to local stdout and stderr, so it does not emit JSON. When `--timeout` is omitted, it keeps running until the remote command exits or the local process is interrupted. It still executes one command session and does not preserve remote shell state across calls; put `cd`, `export`, and other setup in the same command.
+
+Use `--sudo` when the remote command needs sudo privileges and the host stores a `password` metadata comment in `~/.ssh/config`. The implementation wraps the command with `sudo -S -p '' sh -lc ...` and sends the password over SSH stdin, not in the remote command line. `--sudo` bypasses daemon mode because sudo password input must be sent through the current SSH channel.
+
+```bash
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "whoami && id -u" --sudo
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "apt update" --sudo --stream
+```
 
 For related read-only checks, combine commands:
 
@@ -182,5 +191,6 @@ Prefer key authentication. If password metadata exists in config comments, avoid
 - Connection timeout: verify network, host status, firewall, jump host reachability; retry long commands with `--timeout 300`.
 - Alias not found: run `find` with the user's keyword or list all servers.
 - Daemon stuck: run `ssh_daemon.py stop <alias>`, then retry; use `--no-daemon` for direct mode.
+- Sudo asks for a password: use `--sudo`; if it still fails, confirm the host has password metadata in `~/.ssh/config` and that the SSH password is also valid for sudo.
 - Transfer path mangled on Windows: ensure `MSYS_NO_PATHCONV=1` is set for upload/download/server-transfer commands.
 - Passphrase key on Windows: confirm Windows OpenSSH Authentication Agent is running and the key is loaded.
