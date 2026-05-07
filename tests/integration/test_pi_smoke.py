@@ -3,6 +3,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -61,6 +62,16 @@ def _run_script(script_name, args, timeout=90, check=True):
     return payload, result
 
 
+def _run_raw_script(script_name, args, timeout=90):
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / script_name), *args],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+
+
 @pytest.fixture
 def remote_root():
     root = f"/tmp/ssh-skill-test-{uuid.uuid4().hex}"
@@ -108,6 +119,59 @@ def test_stream_execute_outputs_raw_stdout_and_stderr():
     assert result.returncode == 0, _failure(result)
     assert result.stdout == "stream-out\n"
     assert result.stderr == "stream-err\n"
+
+
+def test_session_lifecycle_against_real_host():
+    session = f"it-{uuid.uuid4().hex[:12]}"
+
+    try:
+        payload, _ = _run_script(
+            "ssh_execute.py",
+            [
+                HOST,
+                "printf 'session-begin\\n'; sleep 1; printf 'session-end\\n'",
+                "--session",
+                session,
+                "--timeout",
+                "15",
+            ],
+            timeout=30,
+        )
+
+        assert payload["session"] == session
+        assert payload["state"] == "started"
+        assert payload["pid"].isdigit()
+
+        status = None
+        for _ in range(20):
+            status, _ = _run_script(
+                "ssh_execute.py",
+                [HOST, "--session-status", session, "--timeout", "15"],
+                timeout=30,
+            )
+            if status.get("state") == "exited":
+                break
+            time.sleep(0.3)
+
+        assert status is not None
+        assert status["state"] == "exited"
+        assert status["exit_code"] == "0"
+
+        logs = _run_raw_script(
+            "ssh_execute.py",
+            [HOST, "--session-logs", session, "--lines", "20"],
+            timeout=30,
+        )
+        assert logs.returncode == 0, _failure(logs)
+        assert "session-begin\n" in logs.stdout
+        assert "session-end\n" in logs.stdout
+        assert "[session] exited with code 0" in logs.stdout
+    finally:
+        _run_script(
+            "ssh_execute.py",
+            [HOST, f'rm -rf "$HOME/.ssh-skill/sessions/{session}"', "--no-daemon"],
+            check=False,
+        )
 
 
 def test_upload_and_download_small_file(remote_root, tmp_path):

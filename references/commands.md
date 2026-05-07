@@ -37,6 +37,11 @@ python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --stream --timeout 300
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --sudo
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --sudo --stream
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>" --session <name>
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-status <name>
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-logs <name> --lines 100
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-logs <name> --follow
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-stop <name>
 ```
 
 `ssh_execute.py` automatically uses the daemon long connection when available and starts it when needed.
@@ -57,6 +62,20 @@ Use `--sudo` when the remote command needs sudo privileges and the host stores a
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "whoami && id -u" --sudo
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "apt update" --sudo --stream
 ```
+
+Use `--session` when a remote process must keep running after the local SSH command exits. Session names may contain only letters, numbers, dots, dashes, and underscores. Session state is stored on the remote host under `$HOME/.ssh-skill/sessions/<name>/`.
+
+```bash
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "cd /opt/app && python3 worker.py" --session worker
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-status worker
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-logs worker --lines 100
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-logs worker --follow
+python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> --session-stop worker
+```
+
+Session start/status/stop return JSON. `--session-logs` writes raw log content to local stdout; with `--follow`, it streams `tail -f` until interrupted or `--timeout` expires. A session is not a persistent interactive shell, so it does not preserve `cd` or `export` state between different session names or normal command calls. Put setup in the original session command.
+
+If `--session` is combined with `--sudo`, use `--sudo` again for `--session-status`, `--session-logs`, and `--session-stop`; the state files belong to the account that actually ran the session command.
 
 For related read-only checks, combine commands:
 
@@ -192,5 +211,6 @@ Prefer key authentication. If password metadata exists in config comments, avoid
 - Alias not found: run `find` with the user's keyword or list all servers.
 - Daemon stuck: run `ssh_daemon.py stop <alias>`, then retry; use `--no-daemon` for direct mode.
 - Sudo asks for a password: use `--sudo`; if it still fails, confirm the host has password metadata in `~/.ssh/config` and that the SSH password is also valid for sudo.
+- Session logs are missing: confirm the same alias/user and same `--sudo` choice are used for start and logs; inspect `$HOME/.ssh-skill/sessions/<name>/session.log` on the remote host.
 - Transfer path mangled on Windows: ensure `MSYS_NO_PATHCONV=1` is set for upload/download/server-transfer commands.
 - Passphrase key on Windows: confirm Windows OpenSSH Authentication Agent is running and the key is loaded.

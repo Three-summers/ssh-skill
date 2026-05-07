@@ -9,10 +9,11 @@
 
 ## 📢 Recent Updates
 
-### v3.4 - Automated Tests and Dependency File (2026-05-07)
+### v3.4 - Automated Tests, Remote Sessions, and Dependency File (2026-05-07)
 
 - ✅ **Added pytest test suite**: Covers server-to-server transfer, Paramiko client behavior, SSH config parsing, and tunnel helpers
 - 📡 **Added streaming command execution**: `ssh_execute.py --stream` forwards remote stdout/stderr live for blocking tasks and log watching
+- 🧵 **Added remote background sessions**: `ssh_execute.py --session` runs commands in the background on the remote host and exposes status/logs/stop management
 - 🔐 **Added sudo command mode**: `ssh_execute.py --sudo` reads password metadata from SSH config comments and passes it to `sudo -S` through stdin
 - 🧪 **Real SSH integration tests**: Skipped by default; set `SSH_SKILL_TEST_HOST=pi` to run smoke tests against a real remote server
 - 📦 **Added requirements.txt**: Centralizes runtime and test dependencies for new environments
@@ -195,6 +196,18 @@ python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "apt update
 
 `--sudo` bypasses daemon mode because sudo password input must be sent through the current SSH channel stdin. If the target host has no password metadata, the command fails with a missing sudo password message.
 
+When you need a remote program to keep running after the SSH connection ends, use a named session. The command starts in the background on the remote host, and logs plus exit code are stored under `$HOME/.ssh-skill/sessions/<name>/`:
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "cd /opt/app && python3 worker.py" --session worker
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-status worker
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-logs worker --lines 100
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-logs worker --follow
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-stop worker
+```
+
+`--session` is not shell-state reuse; each session is a remote background process plus a small set of state files. If the session command starts with `--sudo`, later status/logs/stop calls should also use `--sudo` because the session files are written under the sudo user's `$HOME`.
+
 ### Upload Files
 
 ```bash
@@ -238,7 +251,7 @@ Real SSH smoke tests require an explicit target alias. This example uses `pi` fr
 SSH_SKILL_TEST_HOST=pi python3 -m pytest tests/integration -q
 ```
 
-Integration tests create temporary files under remote `/tmp/ssh-skill-test-*` and clean them up at the end. They cover remote command execution, single-file upload/download, recursive directory transfer, and stream-mode server-to-server transfer.
+Integration tests create temporary files under remote `/tmp/ssh-skill-test-*` and clean them up at the end. They cover remote command execution, streaming output, remote background session lifecycle, single-file upload/download, recursive directory transfer, and stream-mode server-to-server transfer.
 
 Before publishing or changing scripts, run:
 

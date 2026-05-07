@@ -9,10 +9,11 @@
 
 ## 📢 最近更新
 
-### v3.4 - 自动化测试与依赖文件（2026-05-07）
+### v3.4 - 自动化测试、远程会话与依赖文件（2026-05-07）
 
 - ✅ **新增 pytest 测试套件**：覆盖服务器间传输、Paramiko 客户端、SSH config 解析和 tunnel 辅助逻辑
 - 📡 **新增流式命令执行**：`ssh_execute.py --stream` 可实时回传远程 stdout/stderr，适合阻塞任务和日志观察
+- 🧵 **新增远程后台会话**：`ssh_execute.py --session` 可在远端后台运行命令，并通过 status/logs/stop 管理
 - 🔐 **新增 sudo 命令模式**：`ssh_execute.py --sudo` 使用 SSH config 注释元数据中的密码，通过 stdin 安全传给 `sudo -S`
 - 🧪 **真实 SSH 集成测试**：默认跳过，设置 `SSH_SKILL_TEST_HOST=pi` 后可对真实远程服务器执行 smoke tests
 - 📦 **新增 requirements.txt**：统一声明运行和测试依赖，便于新环境快速安装
@@ -195,6 +196,18 @@ python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "apt update
 
 `--sudo` 会绕过 daemon 模式，因为 sudo 密码需要通过当前 SSH channel 的 stdin 传递。如果目标主机没有配置密码元数据，命令会失败并提示缺少 sudo password。
 
+需要让远程程序脱离当前 SSH 连接继续运行时，使用命名会话。命令会在远端后台启动，日志和退出码保存在远端 `$HOME/.ssh-skill/sessions/<name>/`：
+
+```bash
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 "cd /opt/app && python3 worker.py" --session worker
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-status worker
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-logs worker --lines 100
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-logs worker --follow
+python ~/.claude/skills/ssh-skill/scripts/ssh_execute.py prod-web-01 --session-stop worker
+```
+
+`--session` 不是交互式终端复用；每个会话是一个远端后台进程和一组状态文件。如果会话命令使用 `--sudo` 启动，后续 status/logs/stop 也应带上 `--sudo`，因为状态文件会写在 sudo 用户的 `$HOME` 下。
+
 ### 上传文件
 
 ```bash
@@ -238,7 +251,7 @@ python3 -m pytest tests/unit -q
 SSH_SKILL_TEST_HOST=pi python3 -m pytest tests/integration -q
 ```
 
-集成测试会在远程 `/tmp/ssh-skill-test-*` 下创建临时文件，并在结束时清理。它覆盖远程命令、单文件上传下载、目录递归传输和 stream 模式服务器间传输。
+集成测试会在远程 `/tmp/ssh-skill-test-*` 下创建临时文件，并在结束时清理。它覆盖远程命令、流式输出、远程后台 session 生命周期、单文件上传下载、目录递归传输和 stream 模式服务器间传输。
 
 发布或修改脚本前建议运行：
 

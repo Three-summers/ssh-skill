@@ -9,6 +9,12 @@ SSH命令执行CLI工具 v3.0
 用法：
     python ssh_execute.py <alias> <command> [--timeout TIMEOUT]
     python ssh_execute.py <alias> <command> --no-daemon
+    python ssh_execute.py <alias> <command> --stream
+    python ssh_execute.py <alias> <command> --sudo
+    python ssh_execute.py <alias> <command> --session <name>
+    python ssh_execute.py <alias> --session-status <name>
+    python ssh_execute.py <alias> --session-logs <name> [--follow] [--lines N]
+    python ssh_execute.py <alias> --session-stop <name>
 
 示例：
     python ssh_execute.py prod-web-01 "whoami && hostname"
@@ -24,10 +30,14 @@ import argparse
 import subprocess
 import time
 import shlex
+import re
 
 # 添加lib到路径
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_script_dir, 'lib'))
+
+
+SESSION_ROOT = "$HOME/.ssh-skill/sessions"
 
 
 def _send_message(sock, data):
@@ -163,6 +173,191 @@ def _execute_paramiko_command(client, command, timeout=None, sudo_password=None)
             'stdout': '',
             'stderr': f'Execution error: {e}',
         }
+
+
+def _session_safe_name(session):
+    """Validate a session name before using it in remote shell paths."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", session or ""):
+        raise ValueError(
+            "session name must be 1-64 chars: letters, numbers, dot, dash, underscore"
+        )
+    return session
+
+
+def _session_paths(session):
+    safe = _session_safe_name(session)
+    remote_dir = f"{SESSION_ROOT}/{safe}"
+    return {
+        "session": safe,
+        "remote_dir": remote_dir,
+        "pid": f"{remote_dir}/pid",
+        "log": f"{remote_dir}/session.log",
+        "exit_code": f"{remote_dir}/exit_code",
+    }
+
+
+def _remote_double_quote(value):
+    """Quote trusted remote shell values while preserving $HOME expansion."""
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def _parse_key_values(text):
+    values = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _session_start_remote_command(session, command):
+    paths = _session_paths(session)
+    runner = (
+        "printf '[session] started at %s\\n' \"$(date -Is 2>/dev/null || date)\"; "
+        f"{command}; "
+        "code=$?; "
+        "printf '[session] exited with code %s at %s\\n' "
+        "\"$code\" \"$(date -Is 2>/dev/null || date)\"; "
+        f"printf '%s\\n' \"$code\" > {_remote_double_quote(paths['exit_code'])}; "
+        "exit \"$code\""
+    )
+    return (
+        f"session_dir={_remote_double_quote(paths['remote_dir'])}; "
+        'pid_file="$session_dir/pid"; '
+        'log_file="$session_dir/session.log"; '
+        'exit_code_file="$session_dir/exit_code"; '
+        'mkdir -p "$session_dir" && '
+        'chmod 755 "$session_dir" && '
+        ': > "$log_file" && '
+        'rm -f "$exit_code_file" && '
+        "("
+        f"nohup sh -lc {shlex.quote(runner)} "
+        '>> "$log_file" 2>&1 < /dev/null & '
+        "pid=$!; "
+        'printf "%s\\n" "$pid" > "$pid_file"; '
+        "printf 'pid=%s\\n' \"$pid\"; "
+        'printf "remote_dir=%s\\n" "$session_dir"; '
+        'printf "log=%s\\n" "$log_file"'
+        ")"
+    )
+
+
+def _session_status_remote_command(session):
+    paths = _session_paths(session)
+    return (
+        f"session_dir={_remote_double_quote(paths['remote_dir'])}; "
+        'pid_file="$session_dir/pid"; '
+        'log_file="$session_dir/session.log"; '
+        'exit_code_file="$session_dir/exit_code"; '
+        'if [ ! -f "$pid_file" ]; then '
+        f"printf 'session=%s\\nstate=missing\\n' {shlex.quote(paths['session'])}; "
+        "exit 1; fi; "
+        'pid=$(cat "$pid_file"); '
+        "exit_code=''; "
+        'if [ -f "$exit_code_file" ]; then '
+        'exit_code=$(cat "$exit_code_file"); fi; '
+        'if [ -n "$exit_code" ]; then state=exited; '
+        'elif kill -0 "$pid" 2>/dev/null; then state=running; '
+        "else state=unknown; fi; "
+        f"printf 'session=%s\\n' {shlex.quote(paths['session'])}; "
+        "printf 'state=%s\\n' \"$state\"; "
+        "printf 'pid=%s\\n' \"$pid\"; "
+        "printf 'exit_code=%s\\n' \"$exit_code\"; "
+        'printf "log=%s\\n" "$log_file"'
+    )
+
+
+def _session_stop_remote_command(session):
+    paths = _session_paths(session)
+    return (
+        f"session_dir={_remote_double_quote(paths['remote_dir'])}; "
+        'pid_file="$session_dir/pid"; '
+        'if [ ! -f "$pid_file" ]; then '
+        f"printf 'session=%s\\nstate=missing\\n' {shlex.quote(paths['session'])}; "
+        "exit 1; fi; "
+        'pid=$(cat "$pid_file"); '
+        "if kill -0 \"$pid\" 2>/dev/null; then "
+        "kill -TERM \"$pid\" 2>/dev/null || true; sleep 1; "
+        "if kill -0 \"$pid\" 2>/dev/null; then state=stopping; "
+        "else state=stopped; fi; "
+        "else state=not_running; fi; "
+        f"printf 'session=%s\\n' {shlex.quote(paths['session'])}; "
+        "printf 'state=%s\\n' \"$state\"; "
+        "printf 'pid=%s\\n' \"$pid\""
+    )
+
+
+def session_start(alias, command, session, timeout, use_sudo=False):
+    result = direct_execute(
+        alias,
+        _session_start_remote_command(session, command),
+        timeout,
+        use_sudo=use_sudo,
+    )
+    if not result.get("success"):
+        return result
+    details = _parse_key_values(result.get("stdout", ""))
+    return {
+        "success": True,
+        "session": _session_safe_name(session),
+        "state": "started",
+        **details,
+    }
+
+
+def session_status(alias, session, timeout, use_sudo=False):
+    result = direct_execute(
+        alias,
+        _session_status_remote_command(session),
+        timeout,
+        use_sudo=use_sudo,
+    )
+    details = _parse_key_values(result.get("stdout", ""))
+    return {
+        "success": result.get("success", False),
+        "session": _session_safe_name(session),
+        **details,
+        "stderr": result.get("stderr", ""),
+    }
+
+
+def session_stop(alias, session, timeout, use_sudo=False):
+    result = direct_execute(
+        alias,
+        _session_stop_remote_command(session),
+        timeout,
+        use_sudo=use_sudo,
+    )
+    details = _parse_key_values(result.get("stdout", ""))
+    return {
+        "success": result.get("success", False),
+        "session": _session_safe_name(session),
+        **details,
+        "stderr": result.get("stderr", ""),
+    }
+
+
+def session_logs(
+    alias,
+    session,
+    lines=100,
+    follow=False,
+    timeout=None,
+    use_sudo=False,
+):
+    paths = _session_paths(session)
+    command = f"tail -n {int(lines)} {'-f ' if follow else ''}{paths['log']}"
+    if follow:
+        return stream_execute(alias, command, timeout, use_sudo=use_sudo)
+    result = direct_execute(alias, command, timeout or 30, use_sudo=use_sudo)
+    if result.get("stdout"):
+        sys.stdout.write(result["stdout"])
+        sys.stdout.flush()
+    if result.get("stderr"):
+        sys.stderr.write(result["stderr"])
+        sys.stderr.flush()
+    return 0 if result.get("success") else 1
 
 
 def direct_execute(alias, command, timeout, use_sudo=False):
@@ -346,7 +541,7 @@ def stream_execute(alias, command, timeout=None, use_sudo=False):
 def main():
     parser = argparse.ArgumentParser(description='SSH command execution tool v3.0')
     parser.add_argument('alias', help='SSH host alias from ~/.ssh/config')
-    parser.add_argument('command', help='Command to execute')
+    parser.add_argument('command', nargs='?', help='Command to execute')
     parser.add_argument('--timeout', type=int, help='Timeout in seconds')
     parser.add_argument('--no-daemon', action='store_true',
                         help='Disable daemon mode, use direct SSH connection')
@@ -354,11 +549,68 @@ def main():
                         help='Stream stdout/stderr live; disables JSON output')
     parser.add_argument('--sudo', action='store_true',
                         help='Run command through sudo using password metadata')
+    parser.add_argument('--session',
+                        help='Start command as a named remote background session')
+    parser.add_argument('--session-status',
+                        help='Show status for a named remote session')
+    parser.add_argument('--session-logs',
+                        help='Print logs for a named remote session')
+    parser.add_argument('--session-stop',
+                        help='Stop a named remote session')
+    parser.add_argument('--follow', action='store_true',
+                        help='Follow session logs with tail -f')
+    parser.add_argument('--lines', type=int, default=100,
+                        help='Number of session log lines to print')
 
     args = parser.parse_args()
     timeout = args.timeout if args.stream else (args.timeout or 30)
 
     try:
+        session_actions = [
+            bool(args.session),
+            bool(args.session_status),
+            bool(args.session_logs),
+            bool(args.session_stop),
+        ]
+        if sum(session_actions) > 1:
+            parser.error('use only one session action at a time')
+
+        if args.session:
+            if not args.command:
+                parser.error('--session requires a command')
+            result = session_start(
+                args.alias, args.command, args.session, timeout or 30, args.sudo
+            )
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            sys.exit(0 if result.get('success') else 1)
+
+        if args.session_status:
+            result = session_status(
+                args.alias, args.session_status, timeout or 30, args.sudo
+            )
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            sys.exit(0 if result.get('success') else 1)
+
+        if args.session_logs:
+            sys.exit(session_logs(
+                args.alias,
+                args.session_logs,
+                lines=args.lines,
+                follow=args.follow,
+                timeout=args.timeout,
+                use_sudo=args.sudo,
+            ))
+
+        if args.session_stop:
+            result = session_stop(
+                args.alias, args.session_stop, timeout or 30, args.sudo
+            )
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            sys.exit(0 if result.get('success') else 1)
+
+        if not args.command:
+            parser.error('command is required unless a session action is used')
+
         if args.stream:
             sys.exit(stream_execute(
                 args.alias, args.command, timeout, use_sudo=args.sudo
