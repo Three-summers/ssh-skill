@@ -97,6 +97,14 @@ def create_ssh_client(alias):
     return loader.from_alias(alias)
 
 
+def _safe_error(error):
+    """Return an error string without leaking connection metadata."""
+    message = str(error) or error.__class__.__name__
+    if 'password' in message.lower():
+        return f"{error.__class__.__name__}: sensitive connection details redacted"
+    return message
+
+
 def get_remote_file_size(alias, remote_path):
     """获取远程文件/目录大小（字节）"""
     client = create_ssh_client(alias)
@@ -178,8 +186,8 @@ def stream_transfer(source_alias, source_path, dest_alias, dest_path,
     source_params = get_connection_params(source_alias)
     dest_params = get_connection_params(dest_alias)
 
-    source_client = create_ssh_client(source_params)
-    dest_client = create_ssh_client(dest_params)
+    source_client = create_ssh_client(source_alias)
+    dest_client = create_ssh_client(dest_alias)
 
     source_ssh = source_client._get_connection()
     dest_ssh = dest_client._get_connection()
@@ -516,21 +524,21 @@ def validate_transfer(source_alias, dest_alias):
 
     # 检查源服务器连接
     try:
-        client = create_ssh_client(get_connection_params(source_alias))
+        client = create_ssh_client(source_alias)
         result = client.execute("echo OK")
         if not result.success:
             issues.append(f"无法连接到源服务器 {source_alias}: {result.stderr}")
     except Exception as e:
-        issues.append(f"源服务器 {source_alias} 连接失败: {e}")
+        issues.append(f"源服务器 {source_alias} 连接失败: {_safe_error(e)}")
 
     # 检查目标服务器连接
     try:
-        client = create_ssh_client(get_connection_params(dest_alias))
+        client = create_ssh_client(dest_alias)
         result = client.execute("echo OK")
         if not result.success:
             issues.append(f"无法连接到目标服务器 {dest_alias}: {result.stderr}")
     except Exception as e:
-        issues.append(f"目标服务器 {dest_alias} 连接失败: {e}")
+        issues.append(f"目标服务器 {dest_alias} 连接失败: {_safe_error(e)}")
 
     return issues
 

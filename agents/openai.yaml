@@ -1,0 +1,4 @@
+interface:
+  display_name: "SSH Skill"
+  short_description: "Run remote SSH operations via scripts"
+  default_prompt: "Use $ssh-skill to list configured servers and run a remote status check."

@@ -23,6 +23,12 @@ class SSHResult:
     exit_code: int
 
 
+def _format_exception(error: Exception) -> str:
+    """Return useful text even for exceptions whose str() is empty."""
+    message = str(error)
+    return message if message else error.__class__.__name__
+
+
 class ConnectionPool:
     """SSH 连接池管理器
 
@@ -605,7 +611,7 @@ class ParamikoClient:
             return SSHResult(
                 success=False,
                 stdout="",
-                stderr=f"Execution error: {str(e)}",
+                stderr=f"Execution error: {_format_exception(e)}",
                 exit_code=-1
             )
 
@@ -681,7 +687,7 @@ class ParamikoClient:
             return SSHResult(
                 success=False,
                 stdout="",
-                stderr=f"Agent forward execution error: {str(e)}",
+                stderr=f"Agent forward execution error: {_format_exception(e)}",
                 exit_code=-1
             )
 
@@ -1167,7 +1173,7 @@ class ParamikoClient:
 
             # 如果有错误输出，也返回
             for line in stderr:
-                yield f"[STDERR] {line.rstrip('\\n')}"
+                yield f"[STDERR] {line.rstrip()}"
 
         except Exception as e:
-            yield f"[ERROR] Execution error: {str(e)}"
+            yield f"[ERROR] Execution error: {_format_exception(e)}"
