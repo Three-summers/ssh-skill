@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts", "scripts/lib"]
+markers = [
+  "unit: local tests that do not require network or real SSH hosts",
+  "integration: opt-in tests that require SSH_SKILL_TEST_HOST",
+]

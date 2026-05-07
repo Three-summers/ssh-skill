@@ -1,0 +1,5 @@
+# Runtime dependency for SSH config parsing and password/SFTP connections.
+paramiko>=3.4,<5
+
+# Test dependency for the local unit suite and opt-in integration smoke tests.
+pytest>=8,<10
