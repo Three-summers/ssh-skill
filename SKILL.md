@@ -17,6 +17,8 @@ metadata:
 - 不用于本地命令、当前工作区操作、`localhost` 或 `127.0.0.1`。
 - 上传、下载、服务器间传输在 Git Bash/MSYS 环境必须加 `MSYS_NO_PATHCONV=1`，防止 `/tmp/file` 被转换为 Windows 路径。
 - 对同一服务器的多个只读状态查询，优先合并成一次远程命令；状态变更、依赖步骤或需要独立错误处理时分开执行。
+- 对 `gdb`、`pdb`、`lldb` 等需要持续 stdin/PTY 状态的调试器，使用 `ssh_interactive.py`。不要把普通 `ssh_execute.py` 命令发送到 interactive session；普通命令和调试 PTY 必须隔离。
+- interactive PTY 当前要求 direct Paramiko-supported alias；该 interactive backend 暂不支持 ProxyJump/jump-host alias。
 - 脚本通常输出 JSON；先检查 `success`、`exit_code`、`stdout`、`stderr`，再向用户汇总结果。
 
 ## Script Location
@@ -51,6 +53,11 @@ SCRIPT_ROOT="$SSH_SKILL_DIR/scripts"
 python3 "$SCRIPT_ROOT/ssh_config_manager_v3.py" list-servers
 python3 "$SCRIPT_ROOT/ssh_config_manager_v3.py" find "<keyword>"
 python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "<command>"
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> start <session> --command "<debugger-command>"
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> send <session> "<debugger-input>" --wait-for "<prompt-regex>" --timeout 10
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> read <session> --since <seq> --wait-for "<prompt-regex>" --timeout 5
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> control <session> ctrl-c
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> stop <session>
 MSYS_NO_PATHCONV=1 python3 "$SCRIPT_ROOT/ssh_upload.py" <alias> "<local-path>" "<remote-path>"
 MSYS_NO_PATHCONV=1 python3 "$SCRIPT_ROOT/ssh_download.py" <alias> "<remote-path>" "<local-path>"
 MSYS_NO_PATHCONV=1 python3 "$SCRIPT_ROOT/ssh_server_transfer.py" <source-alias> "<source-path>" <dest-alias> "<dest-path>"

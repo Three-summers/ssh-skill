@@ -85,6 +85,32 @@ python3 "$SCRIPT_ROOT/ssh_execute.py" <alias> "hostname && uptime && df -h && fr
 
 Keep state-changing commands separate when later steps depend on earlier results.
 
+## Interactive Debugging PTY
+
+Use `ssh_interactive.py` when a remote debugger or shell must keep stdin, stdout, and PTY state across multiple local CLI calls. Each interactive session owns a dedicated remote PTY channel. Normal `ssh_execute.py` commands do not reuse interactive PTYs.
+Current interactive PTY sessions use direct Paramiko connections and do not support ProxyJump/jump-host aliases yet; use a direct alias or fall back to normal commands/tunnels where appropriate.
+
+```bash
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> start <name> --command "cd /opt/app && gdb ./app"
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> send <name> "break main"
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> send <name> "run" --wait-for "(gdb)" --timeout 10
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> read <name> --since 0 --wait-for "(gdb)" --timeout 5
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> control <name> ctrl-c
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> resize <name> --cols 120 --rows 40
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> status <name>
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> list
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> stop <name>
+```
+
+Use separate session names for separate debuggers on the same host:
+
+```bash
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> start gdb-api --command "cd /srv/api && gdb ./api"
+python3 "$SCRIPT_ROOT/ssh_interactive.py" <alias> start pdb-worker --command "cd /srv/worker && python3 -m pdb worker.py"
+```
+
+The local interactive daemon must stay alive for the PTY session to remain usable. This is different from remote `tmux`: if the local daemon exits, the interactive PTY is not guaranteed to be recoverable.
+
 ## Upload And Download
 
 Git Bash/MSYS requires `MSYS_NO_PATHCONV=1`.
